@@ -3,6 +3,7 @@
 #include "loader.h"
 #include "trap.h"
 #include "vm.h"
+#include "timer.h"
 
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
@@ -33,6 +34,9 @@ void proc_init(void)
 		/*
 		* LAB1: you may need to initialize your new fields of proc here
 		*/
+		p->task_info.status = UnInit;
+		p->task_info.time = 0;
+		memset(p->task_info.syscall_times, 0, sizeof(p->task_info.syscall_times));
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = 0;
@@ -88,6 +92,8 @@ void scheduler(void)
 				*/
 				p->state = RUNNING;
 				current_proc = p;
+				uint64 cycle = get_cycle();
+				if (p->task_info.time == 0) p->task_info.time = cycle * 1000 / CPU_FREQ;
 				swtch(&idle.context, &p->context);
 			}
 		}
