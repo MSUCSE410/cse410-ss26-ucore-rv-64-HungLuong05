@@ -56,6 +56,21 @@ struct proc *fetch_task()
 	return pool + index;
 }
 
+struct proc *fetch_task_priority()
+{
+	if (task_queue.empty) return NULL;
+	int index = task_queue.front;
+	for (int i = task_queue.front; i != task_queue.tail; i = (i + 1) % NPROC) {
+		if (pool[task_queue.data[index]].stride > pool[task_queue.data[i]].stride) {
+			index = i;
+		}
+	}
+	int value_front = task_queue.data[task_queue.front];
+	task_queue.data[task_queue.front] = task_queue.data[index];
+	task_queue.data[index] = value_front;
+	return fetch_task();
+}
+
 void add_task(struct proc *p)
 {
 	push_queue(&task_queue, p - pool);
@@ -89,6 +104,8 @@ found:
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+	p->priority = 16;
+	p->stride = 0;
 	return p;
 }
 
@@ -114,13 +131,14 @@ void scheduler()
 		if(has_proc == 0) {
 			panic("all app are over!\n");
 		}*/
-		p = fetch_task();
+		p = fetch_task_priority();
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
 		tracef("swtich to proc %d", p - pool);
 		p->state = RUNNING;
 		current_proc = p;
+		p->stride += BIG_STRIDE / p->priority;
 		swtch(&idle.context, &p->context);
 	}
 }
@@ -184,6 +202,8 @@ int fork()
 	np->trapframe->a0 = 0;
 	np->parent = p;
 	np->state = RUNNABLE;
+	np->priority = p->priority;
+	np->stride = p->stride;
 	add_task(np);
 	return np->pid;
 }
@@ -198,6 +218,22 @@ int exec(char *name)
 	p->max_page = 0;
 	loader(id, p);
 	return 0;
+}
+
+int spawn(char* name)
+{
+	int id = get_id_by_name(name);
+	if (id < 0)
+		return -1;
+	struct proc *p = curr_proc();
+	struct proc *np;
+	if ((np = allocproc()) == 0) {
+		return -1;
+	}
+	loader(id, np);
+	np->parent = p;
+	add_task(np);
+	return np->pid;
 }
 
 int wait(int pid, int *code)

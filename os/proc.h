@@ -7,6 +7,7 @@
 
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
+#define BIG_STRIDE (65536)
 
 struct file;
 
@@ -45,6 +46,8 @@ struct proc {
 	struct proc *parent; // Parent process
 	uint64 exit_code;
 	struct file *files[FD_BUFFER_SIZE];
+	int stride;
+	int priority;
 };
 
 int cpuid();
@@ -63,5 +66,7 @@ struct proc *allocproc();
 int fdalloc(struct file *);
 // swtch.S
 void swtch(struct context *, struct context *);
+
+int spawn(char *);
 
 #endif // PROC_H
