@@ -6,6 +6,8 @@
 
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
+#define BIG_STRIDE (65536)
+#define MAX_SYSCALL_NUM (500)
 
 struct file;
 
@@ -31,6 +33,19 @@ struct context {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+typedef enum {
+	UnInit,
+	Ready,
+	Running,
+	Exited,
+} TaskStatus;
+
+typedef struct {
+	TaskStatus status;
+	unsigned int syscall_times[MAX_SYSCALL_NUM];
+	int time;
+} TaskInfo;
+
 // Per-process state
 struct proc {
 	enum procstate state; // Process state
@@ -45,6 +60,9 @@ struct proc {
 	uint64 exit_code;
 	struct file *files
 		[FD_BUFFER_SIZE]; //File descriptor table, using to record the files opened by the process
+	int stride;
+	int priority;
+	TaskInfo task_info;
 };
 
 int cpuid();
@@ -65,5 +83,6 @@ int init_stdio(struct proc *);
 int push_argv(struct proc *, char **);
 // swtch.S
 void swtch(struct context *, struct context *);
+int spawn(char * path);
 
 #endif // PROC_H

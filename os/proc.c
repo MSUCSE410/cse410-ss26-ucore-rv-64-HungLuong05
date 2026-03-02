@@ -4,6 +4,7 @@
 #include "trap.h"
 #include "vm.h"
 #include "queue.h"
+#include "timer.h"
 
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
@@ -37,6 +38,9 @@ void proc_init()
 		p->state = UNUSED;
 		p->kstack = (uint64)kstack[p - pool];
 		p->trapframe = (struct trapframe *)trapframe[p - pool];
+		p->task_info.status = UnInit;
+		p->task_info.time = 0;
+		memset(p->task_info.syscall_times, 0, sizeof(p->task_info.syscall_times));
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = IDLE_PID;
@@ -60,6 +64,21 @@ struct proc *fetch_task()
 	debugf("fetch task %d(pid=%d) from task queue\n", index,
 	       pool[index].pid);
 	return pool + index;
+}
+
+struct proc *fetch_task_priority()
+{
+	if (task_queue.empty) return NULL;
+	int index = task_queue.front;
+	for (int i = task_queue.front; i != task_queue.tail; i = (i + 1) % NPROC) {
+		if (pool[task_queue.data[index]].stride > pool[task_queue.data[i]].stride) {
+			index = i;
+		}
+	}
+	int value_front = task_queue.data[task_queue.front];
+	task_queue.data[task_queue.front] = task_queue.data[index];
+	task_queue.data[index] = value_front;
+	return fetch_task();
 }
 
 void add_task(struct proc *p)
@@ -96,6 +115,8 @@ found:
 	memset((void *)p->files, 0, sizeof(struct file *) * FD_BUFFER_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+	p->priority = 16;
+	p->stride = 0;
 	return p;
 }
 
@@ -132,13 +153,16 @@ void scheduler()
 		if(has_proc == 0) {
 			panic("all app are over!\n");
 		}*/
-		p = fetch_task();
+		p = fetch_task_priority();
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
 		tracef("swtich to proc %d", p - pool);
 		p->state = RUNNING;
 		current_proc = p;
+		p->stride += BIG_STRIDE / p->priority;
+		uint64 cycle = get_cycle();
+		if (p->task_info.time == 0) p->task_info.time = cycle * 1000 / CPU_FREQ;
 		swtch(&idle.context, &p->context);
 	}
 }
@@ -216,6 +240,26 @@ int fork()
 	np->trapframe->a0 = 0;
 	np->parent = p;
 	np->state = RUNNABLE;
+	np->priority = p->priority;
+	np->stride = p->stride;
+	add_task(np);
+	return np->pid;
+}
+
+int spawn(char* path)
+{
+	struct inode *ip;
+	if ((ip = namei(path)) == 0) {
+		errorf("invalid file name %s\n", path);
+		return -1;
+	}
+	struct proc *p = curr_proc();
+	struct proc *np;
+	if ((np = allocproc()) == 0) {
+		return -1;
+	}
+	bin_loader(ip, np);
+	np->parent = p;
 	add_task(np);
 	return np->pid;
 }

@@ -5,6 +5,7 @@
 #include "syscall_ids.h"
 #include "timer.h"
 #include "trap.h"
+#include "vm.h"
 
 uint64 console_write(uint64 va, uint64 len)
 {
@@ -94,6 +95,92 @@ uint64 sys_gettimeofday(uint64 val, int _tz)
 	return 0;
 }
 
+uint64 sys_task_info(uint64 va) {
+	struct proc *current_proc = curr_proc();
+	TaskInfo local_ti;
+
+	uint64 cycle = get_cycle();
+	local_ti.time = (cycle * 1000 / CPU_FREQ) - current_proc->task_info.time;
+	local_ti.status = Running;
+	for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+		local_ti.syscall_times[i] = current_proc->task_info.syscall_times[i];
+	}
+
+	if (copyout(current_proc->pagetable, va, (void *) &local_ti, sizeof(TaskInfo)) < 0) {
+		return -1;
+	}
+	return 0;
+}
+
+uint64 sys_munmap(void* start, uint64 len) {
+	struct proc *current_proc = curr_proc();
+	uint64 a;
+	pte_t* pte;
+	uint64 pa;
+
+	start = (void *) PGROUNDDOWN((uint64) start);
+	for (a = (uint64) start; a < (uint64) start + len; a += PGSIZE) {
+		pte = walk(current_proc->pagetable, a, 0);
+		if (pte == 0) {
+			return -1;
+		}
+
+		if ((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+			return -1;
+		}
+
+		pa = PTE2PA(*pte);
+		kfree((void *) pa);
+		*pte = 0;
+	}
+	return 0;
+}
+
+uint64 sys_mmap(void* start, uint64 len, int port, int flag, int fd) {
+	if ((port & ~0x7) != 0) {
+		return -1;
+	}
+
+	if ((port & 0x7) == 0) {
+		return -1;
+	}
+
+	if (!PGALIGNED((uint64) start)) {
+		return -1;
+	}
+
+	struct proc *current_proc = curr_proc();
+	uint64 a;
+	uint64 mem;
+	uint64 page;
+	int perm;
+
+	len = PGROUNDUP(len);
+
+	perm = PTE_U | PTE_V;
+	if (port & (1 << 0)) perm |= PTE_R;
+	if (port & (1 << 1)) perm |= PTE_W;
+	if (port & (1 << 2)) perm |= PTE_X;
+
+	for (a = (uint64) start; a < (uint64) start + len; a += PGSIZE) {
+		page = useraddr(current_proc->pagetable, a);
+		if (page != 0) {
+			return -1;
+		}
+
+		mem = (uint64) kalloc();
+		if (mem == 0) {
+			return -1;
+		}
+
+		if (mappages(current_proc->pagetable, a, PGSIZE, mem, perm) == -1) {
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
 uint64 sys_getpid()
 {
 	return curr_proc()->pid;
@@ -145,13 +232,20 @@ uint64 sys_wait(int pid, uint64 va)
 uint64 sys_spawn(uint64 va)
 {
 	// TODO: your job is to complete the sys call
-	return -1;
+	struct proc *p = curr_proc();
+	char name[200];
+	copyinstr(p->pagetable, name, va, 200);
+	debugf("sys_spawn %s\n", name);
+	return spawn(name);
 }
 
 uint64 sys_set_priority(long long prio)
 {
 	// TODO: your job is to complete the sys call
-	return -1;
+	if (prio < 2) return -1;
+  struct proc *p = curr_proc();
+	p->priority = prio;
+  return prio;
 }
 
 uint64 sys_openat(uint64 va, uint64 omode, uint64 _flags)
@@ -184,7 +278,7 @@ int sys_fstat(int fd,uint64 stat){
 
 int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags){
 	//TODO: your job is to complete the syscall
-	return -1;
+	return linkat(oldpath, newpath);
 }
 
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
@@ -249,6 +343,18 @@ void syscall()
 	    ret = sys_unlinkat(args[0],args[1],args[2]);
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
+		break;
+	case SYS_setpriority:
+		ret = sys_set_priority(args[0]);
+		break;
+	case SYS_mmap:
+		ret = sys_mmap((void *) args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap((void *) args[0], args[1]);
+		break;
+	case SYS_task_info:
+		ret = sys_task_info(args[0]);
 		break;
 	default:
 		ret = -1;
