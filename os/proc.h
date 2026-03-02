@@ -8,6 +8,7 @@
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
 #define BIG_STRIDE (65536)
+#define MAX_SYSCALL_NUM (500)
 
 struct file;
 
@@ -33,6 +34,19 @@ struct context {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+typedef enum {
+	UnInit,
+	Ready,
+	Running,
+	Exited,
+} TaskStatus;
+
+typedef struct {
+	TaskStatus status;
+	unsigned int syscall_times[MAX_SYSCALL_NUM];
+	int time;
+} TaskInfo;
+
 // Per-process state
 struct proc {
 	enum procstate state; // Process state
@@ -48,6 +62,7 @@ struct proc {
 	struct file *files[FD_BUFFER_SIZE];
 	int stride;
 	int priority;
+	TaskInfo task_info;
 };
 
 int cpuid();
