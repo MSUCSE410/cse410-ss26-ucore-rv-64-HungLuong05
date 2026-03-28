@@ -109,10 +109,10 @@ QEMUOPTS = \
 	-drive file=$(F)/fs-copy.img,if=none,format=raw,id=x0 \
     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
-$(F)/fs.img:
+$(F)/fs.img: user .FORCE
 	make -C $(F)
 
-$(F)/fs-copy.img: $(F)/fs.img
+$(F)/fs-copy.img: $(F)/fs.img .FORCE
 	@$(CP) $< $@
 
 run: build/kernel $(F)/fs-copy.img

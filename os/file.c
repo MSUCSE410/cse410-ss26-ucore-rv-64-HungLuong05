@@ -69,7 +69,7 @@ static struct inode *create(char *path, short type)
 {
 	struct inode *ip, *dp;
 	dp = root_dir(); //Remember that the root_inode is open in this step,so it needs closing then.
-	ivalid(dp);
+	// ivalid(dp);
 	if ((ip = dirlookup(dp, path, 0)) != 0) {
 		warnf("create a exist file\n");
 		iput(dp); //Close the root_inode
@@ -153,4 +153,88 @@ uint64 inoderead(struct file *f, uint64 va, uint64 len)
 	if ((r = readi(f->ip, 1, va, f->off, len)) > 0)
 		f->off += r;
 	return r;
+}
+
+int linkat(uint64 oldpath, uint64 newpath) {
+	struct proc *current_process = curr_proc();
+	char oldname[200], newname[200];
+	if (copyinstr(current_process->pagetable, oldname, oldpath, 200) < 0)
+		return -1;
+	if (copyinstr(current_process->pagetable, newname, newpath, 200) < 0)
+		return -1;
+	struct inode* dp = root_dir();
+	if (dp == 0) return -1;
+	struct inode* ip = dirlookup(dp, oldname, 0);
+	if (ip == 0) {
+		iput(dp);
+		return -1;
+	}
+
+	ivalid(ip);
+	if (ip->type == T_DIR) {
+		iput(ip);
+		iput(dp);
+		return -1;
+	}
+
+	if (dirlink(dp, newname, ip->inum) < 0) {
+		iput(ip);
+		iput(dp);
+		return -1;
+	}
+	ip->nlink += 1;
+	iupdate(ip);
+	iput(ip);
+	iput(dp);
+	return 0;
+}
+
+int unlinkat(uint64 path) {
+	struct proc *current_process = curr_proc();
+	char name[200];
+	if (copyinstr(current_process->pagetable, name, path, 200) < 0)
+		return -1;
+	struct inode* dp = root_dir();
+	if (dp == 0) return -1;
+	struct inode* ip = dirlookup(dp, name, 0);
+	if (ip == 0) {
+		iput(dp);
+		return -1;
+	}
+
+	ivalid(ip);
+	if (dirunlink(dp, name) < 0) {
+		iput(ip);
+		iput(dp);
+		return -1;
+	}
+	if (ip->nlink > 0) {
+		ip->nlink -= 1;
+		iupdate(ip);
+	}
+	iput(ip);
+	iput(dp);
+	return 0;
+}
+
+int fstat(int fd, uint64 st) {
+	if (st == 0) return -1;
+	struct proc* current_process = curr_proc();
+	if (fd < 0 || fd >= FD_BUFFER_SIZE) return -1;
+	struct file* file = current_process->files[fd];
+	if (file == NULL) return -1;
+	if (file->type != FD_INODE || file->ip == 0) return -1;
+
+	struct inode *ip = file->ip;
+	ivalid(ip);
+
+	struct Stat stat;
+	stat.dev = ip->dev;
+	stat.ino = ip->inum;
+	stat.mode = ip->type == T_FILE ? 0x100000 : 0x040000;
+	stat.nlink = ip->nlink;
+	if (copyout(current_process->pagetable, st, (void *) &stat, sizeof(stat)) < 0) {
+		return -1;
+	}
+	return 0;
 }

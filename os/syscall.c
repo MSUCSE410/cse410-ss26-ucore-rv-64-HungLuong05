@@ -273,7 +273,7 @@ uint64 sys_close(int fd)
 
 int sys_fstat(int fd,uint64 stat){
 	//TODO: your job is to complete the syscall
-	return -1;
+	return fstat(fd, stat);
 }
 
 int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags){
@@ -283,7 +283,7 @@ int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint6
 
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
 	//TODO: your job is to complete the syscall
-	return -1;
+	return unlinkat(name);
 }
 
 extern char trap_page[];
@@ -341,6 +341,7 @@ void syscall()
 		break;
 	case SYS_unlinkat:
 	    ret = sys_unlinkat(args[0],args[1],args[2]);
+			break;
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;
