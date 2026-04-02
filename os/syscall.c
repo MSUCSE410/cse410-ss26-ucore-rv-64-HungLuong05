@@ -249,6 +249,49 @@ int sys_waittid(int tid)
 *				for both mutex and semaphore detect, you can also
 *				use this idea or just ignore it.
 */
+int deadlock_detect(const int available[LOCK_POOL_SIZE],
+										const int allocation[NTHREAD][LOCK_POOL_SIZE],
+										const int request[NTHREAD][LOCK_POOL_SIZE]) {
+	
+	int work[LOCK_POOL_SIZE];
+	int finish[NTHREAD] = { 0 };
+	for (int i = 0; i < LOCK_POOL_SIZE; i++) {
+		work[i] = available[i];
+	}
+
+	while (1) {
+		int found = 0;
+		int index = -1;
+
+		for (int i = 0; i < NTHREAD; i++) {
+			int flag = 1;
+			for (int j = 0; j < LOCK_POOL_SIZE; j++) {
+				if (request[i][j] > work[j]) {
+					flag = 0;
+				}
+			}
+			if (flag == 1 && finish[i] == 0) {
+				found = 1;
+				index = i;
+				break;
+			}
+		}
+
+		if (found) {
+			for (int j = 0; j < LOCK_POOL_SIZE; j++) {
+				work[j] += allocation[index][j];
+			}
+			finish[index] = 1;
+		} else {
+			for (int i = 0; i < NTHREAD; i++) {
+				if (finish[i] == 0) {
+					return -1;
+				}
+			}
+			return 0;
+		}
+	}
+}
 
 int sys_mutex_create(int blocking)
 {
@@ -259,6 +302,7 @@ int sys_mutex_create(int blocking)
 	}
 	// LAB5: (4-1) You may want to maintain some variables for detect here
 	int mutex_id = m - curr_proc()->mutex_pool;
+	curr_proc()->mutex_available[mutex_id] = 1;
 	debugf("create mutex %d", mutex_id);
 	return mutex_id;
 }
@@ -271,7 +315,20 @@ int sys_mutex_lock(int mutex_id)
 	}
 	// LAB5: (4-1) You may want to maintain some variables for detect
 	//       or call your detect algorithm here
+
+	struct proc *p = curr_proc();
+	struct thread *t = curr_thread();
+	p->mutex_request[t->tid][mutex_id] += 1;
+	if (p->detect_enable == ENABLED
+		&& deadlock_detect(p->mutex_available, p->mutex_allocation, p->mutex_request) != 0) {
+			p->mutex_request[t->tid][mutex_id] -= 1;
+			return -0xdead;	
+	}
 	mutex_lock(&curr_proc()->mutex_pool[mutex_id]);
+	p->mutex_request[t->tid][mutex_id] -= 1;
+	p->mutex_available[mutex_id] -= 1;
+	p->mutex_allocation[t->tid][mutex_id] += 1;
+
 	return 0;
 }
 
@@ -282,6 +339,9 @@ int sys_mutex_unlock(int mutex_id)
 		return -1;
 	}
 	// LAB5: (4-1) You may want to maintain some variables for detect here
+	curr_proc()->mutex_available[mutex_id] += 1;
+	curr_proc()->mutex_allocation[curr_thread()->tid][mutex_id] -= 1;
+
 	mutex_unlock(&curr_proc()->mutex_pool[mutex_id]);
 	return 0;
 }
@@ -295,6 +355,7 @@ int sys_semaphore_create(int res_count)
 	}
 	// LAB5: (4-2) You may want to maintain some variables for detect here
 	int sem_id = s - curr_proc()->semaphore_pool;
+	curr_proc()->semaphore_available[sem_id] = res_count;
 	debugf("create semaphore %d", sem_id);
 	return sem_id;
 }
@@ -307,6 +368,9 @@ int sys_semaphore_up(int semaphore_id)
 		return -1;
 	}
 	// LAB5: (4-2) You may want to maintain some variables for detect here
+	struct proc *p = curr_proc();
+	p->semaphore_available[semaphore_id]++;
+	p->semaphore_allocation[curr_thread()->tid][semaphore_id]--;
 	semaphore_up(&curr_proc()->semaphore_pool[semaphore_id]);
 	return 0;
 }
@@ -320,7 +384,18 @@ int sys_semaphore_down(int semaphore_id)
 	}
 	// LAB5: (4-2) You may want to maintain some variables for detect
 	//       or call your detect algorithm here
+	struct proc *p = curr_proc();
+	struct thread *t = curr_thread();
+	p->semaphore_request[t->tid][semaphore_id]++;
+	if (p->detect_enable == ENABLED
+		&& deadlock_detect(p->semaphore_available, p->semaphore_allocation, p->semaphore_request) != 0) {
+			p->mutex_request[t->tid][semaphore_id] -= 1;
+			return -0xdead;
+	}
 	semaphore_down(&curr_proc()->semaphore_pool[semaphore_id]);
+	p->semaphore_request[t->tid][semaphore_id] -= 1;
+	p->semaphore_available[semaphore_id] -= 1;
+	p->semaphore_allocation[t->tid][semaphore_id] += 1;
 	return 0;
 }
 
@@ -362,6 +437,21 @@ int sys_condvar_wait(int cond_id, int mutex_id)
 }
 
 // LAB5: (2) you may need to define function enable_deadlock_detect here
+int sys_enable_deadlock_detect(int is_enable) {
+	struct proc *p = curr_proc();
+
+	if (is_enable == 1) {
+		p->detect_enable = ENABLED;
+		return 0;
+	}
+
+	if (is_enable == 0) {
+		p->detect_enable = DISABLED;
+		return 0;
+	}
+
+	return -1;
+}
 
 extern char trap_page[];
 
@@ -417,6 +507,7 @@ void syscall()
 		break;
 	case SYS_pipe2:
 		ret = sys_pipe(args[0]);
+		break;
 	case SYS_thread_create:
 		ret = sys_thread_create(args[0], args[1]);
 		break;
@@ -453,7 +544,9 @@ void syscall()
 	case SYS_condvar_wait:
 		ret = sys_condvar_wait(args[0], args[1]);
 		break;
-	// LAB5: (2) you may need to add case SYS_enable_deadlock_detect here
+	case SYS_enable_deadlock_detect:
+		ret = sys_enable_deadlock_detect(args[0]);
+		break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);

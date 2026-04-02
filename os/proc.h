@@ -45,6 +45,7 @@ struct thread {
 };
 
 enum procstate { P_UNUSED, P_USED, ZOMBIE };
+enum deadlock_detect { DISABLED, ENABLED };
 
 // Per-process state
 struct proc {
@@ -66,6 +67,15 @@ struct proc {
 	// LAB5: (1) Define your variables for deadlock detect here.
 	//			 You may need a flag to record if detection enabled,
 	//       and some arrays for detection algorithm.
+	int mutex_available[LOCK_POOL_SIZE];
+	int mutex_allocation[NTHREAD][LOCK_POOL_SIZE];
+	int mutex_request[NTHREAD][LOCK_POOL_SIZE];
+
+	int semaphore_available[LOCK_POOL_SIZE];
+	int semaphore_allocation[NTHREAD][LOCK_POOL_SIZE];
+	int semaphore_request[NTHREAD][LOCK_POOL_SIZE];
+	
+	enum deadlock_detect detect_enable;
 };
 
 int cpuid();
